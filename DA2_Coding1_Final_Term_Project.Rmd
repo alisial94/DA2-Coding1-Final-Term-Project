@@ -1,0 +1,414 @@
+---
+title: "Data Analysis 2 & Coding 1 - Final Term Project"
+subtitle: "Analysis of Interactions and Reach on a Facebook Post"
+author: "Ali Hasnain Khan Sial (2101874)"
+date: "12/17/2021"
+output: pdf_document
+header-includes: 
+  - \usepackage{float}
+  - \usepackage{longtable}
+---
+
+
+```{r setup, include=FALSE}
+
+#rm(list=ls())
+
+getwd()
+library(tidyverse)
+library(haven)
+library(data.table)
+library(rms)
+library(lspline)
+library(huxtable)
+library(modelsummary)
+library(pscl)
+library(mfx)
+library(kableExtra)
+library(lspline)
+library(reshape2)
+library(dplR)
+library(fixest)
+library(dplyr)
+library(AER)
+library(ggplot2)
+library(ggpubr)
+
+getwd()
+```
+## Introduction
+The goal of this document is to investigate if a correlation exists between interactions
+on a Facebook post and its reach and also to explore if other factors have an impact. Working in the marketing sector provided me with the opportunity to explore various digital media tools and their mechanics. The idea of how significant each components involved in the success of a social media post has always intrigued me. Therefore, Inspired by the research **_[S. Moro, P. Rita and B. Vala.](https://www.sciencedirect.com/science/article/abs/pii/S0148296316000813?via%3Dihub)_** (please click for link), I decided to use the same raw data to run an analysis of my own. 
+
+
+## Data
+The data was obtained from open source at **_[Kaggle](https://www.kaggle.com/yamqwe/predicting-facebook-posts-impact?select=dataset_Facebook.csv)_** (please click for link). As mentioned earlier, the data being used for the analysis was collected as part of research conducted on Facebook posts of a cosmetic brand for the entire year. The name of the brand is not disclosed due to confidentially purposes. Data has a total of **500 observations** and 17 variables, but only **5 variables will be used for the analysis**. 
+
+
+## Data Cleaning & Data Munging
+The data obtained was in a completely raw CSV format which required cleaning. Upon loading the data, I realised that it was stored in one column using a delimiter and had to be manually separated into individual columns. To begin the cleaning process, I started by dropping the columns from the table which wont be included in the analysis. The remaining 5 variables are as follows: 
+
+- **Y: Total Interactions**: as the name suggests, this variable records the total interactions on a post which means sum of likes, shares and comments (this is the dependent variable). 
+- **X: Total Reach**: records the total reach per post (this is our independent variable)
+- **Z1: If the post was paid?**: a binary variable that records if the post was paid (first confounding variable)
+- **Z2: What time of the day was it posted at?**: what hour of the day the post was uploaded between 0-24 (second confounding variable)
+- **Z3: Which type of post was it?**:a categorical variable that records if the post was a photo, status ,link or a video (third confounding variable).
+
+The next step was to adjust the type of each columns because originally they were all recorded as a character variable. After that I reviewed and investigated for further filtration and distribution of the variables. The filtration and adjustments made to the data based on my observation are as follows:
+
+- _Total Interactions_: There were few very large values and few very small values and the distribution was also right skewed. Therefore, I filtered the data for values outside the range of 0 to 2,000. The large values were also quite far away from 2,000, thus it made sense to restrict the data within that range. Furthermore, I also decided to take log for the values to make the distribution more normal, an additional column was added to record the values. The graph for the with and without log normal distribution of the Total interactions is provided in the appendix (Exhibit 1).
+- _Total Reach_: Again there were few exceptionally large values which had to be removed. I filtered total reach for values below 80,000. Additionally, the distribution had to be be normalized as it was right skewed. A new column was added for log normal values and the graph for distribution is provided in the appendix (Exhibit 2). 
+- _Paid Post_: 1 value for variable was missing, thus the observation was removed from the data.
+- _Additional Variables_: 4 new binary variables were added for the categorical variable "Type of Post". The new variables are **Photo, Status, Link and Video**. 
+
+
+```{r, include=FALSE}
+### Importing data from github repo:
+
+raw_data <- read_csv(url("https://raw.githubusercontent.com/alisial94/DA2-Coding1-Final-Term-Project/main/Data/dataset_Facebook.csv")) 
+
+head( raw_data )
+view(raw_data)
+
+### Transforming the into columns since it was downloaded as CSV (20 columns were made in total).
+data <- separate(data = raw_data, col = "Page total likes;Type;Category;Post Month;Post Weekday;Post Hour;Paid;Lifetime Post Total Reach;Lifetime Post Total Impressions;Lifetime Engaged Users;Lifetime Post Consumers;Lifetime Post Consumptions;Lifetime Post Impressions by people who have liked your Page;Lifetime Post reach by people who like your Page;Lifetime People who have liked your Page and engaged with your post;comment;like;share;Total Interactions", 
+         into = c("Page_total_likes", "Type", "Category", "Post_Month", "Post_Weekday" ,
+                  "Post_Hour" , "Paid" , "Total_Reach" , "Lifetime_Post_Total_Impressions" ,
+                  "Lifetime_Engaged_Users", "Lifetime_Post_Consumer" ,
+                  "Lifetime_Post_Consumptions" , "Lifetime_Post_Impressions_by_people_who_have_liked_your_Page" ,
+                  "Lifetime_Post_reach_by_people_who_like_your_Page" , "Lifetime_People_who_have_liked_your_Page_and_engaged_with_your_post" ,
+                  "comment" , "like" , "share" , "Total_Interactions"), sep = ";")
+view(data)
+
+
+### Removing columns that are not needed for the analysis
+data_clean<- data[, -c(1,3,4,5,9,10,11,12,13,14,15,16,17,18)]
+view(data_clean)
+
+### Fixing the column type
+data_clean$Post_Hour <- as.numeric(data_clean$Post_Hour)
+data_clean$Paid <-as.numeric(data_clean$Paid)
+data_clean$Total_Reach <- as.numeric(data_clean$Total_Reach)
+data_clean$Total_Interactions <- as.numeric(data_clean$Total_Interactions)
+
+### Summary statistics to check for further cleaning
+P95 <- function(x){ quantile(x,.95,na.rm=T)}
+P05 <- function(x){quantile(x,0.05,na.rm=T)}
+datasummary( Total_Interactions + Total_Reach + Post_Hour ~ mean + SD + Min + Max + Median + P95 + P05 + N , data = data_clean )
+datasummary_skim(data_clean)
+
+### Filtering the data for Total Interactions less than 2000 and total reach less than 80,000 (removed 19 observations)
+data_clean <- data_clean %>% filter(Total_Interactions > 0 & Total_Interactions <= 2000) %>% 
+  filter(Total_Reach <= 80000) 
+
+data_clean <- data_clean %>% filter(!is.na(data_clean$Paid))
+
+
+## Taking LOG for Total Interactions and Total Reach
+
+### Checking for Total Interactions
+g1 <- ggplot(data_clean , aes(x = Total_Interactions)) +
+  geom_histogram( fill='navyblue', color = 'white' ) +
+  labs(y = 'Count',x = "Total Interactions") +
+  theme_bw()
+
+#### right skewed thus log
+data_clean$ln_Total_Interactions <- log(data_clean$Total_Interactions)
+
+## Histogram for Log normal Interactions
+g2 <- ggplot( data_clean , aes(x = ln_Total_Interactions)) +
+  geom_histogram( binwidth = 0.5, fill='navyblue', color = 'white' ) +
+  labs(y = 'Count',x = "Log Total Interactions") +
+  theme_bw()
+
+
+## Adding figures to be added in adjacent to each other
+association_figs_interaction <- ggarrange(g1, g2,
+                       hjust = -0.6,
+                       ncol = 2, nrow = 1)
+association_figs_interaction
+
+### Checking for Total Reach
+g3 <- ggplot(data_clean , aes(x = Total_Reach)) +
+  geom_histogram( fill='navyblue', color = 'white' ) +
+  labs(y = 'Count',x = "Total Reach") +
+  theme_bw()
+
+#### right skewed thus log
+data_clean$ln_Total_Reach <- log(data_clean$Total_Reach)
+
+
+## Histogram for Log normal Reach
+g4 <- ggplot( data_clean , aes(x = ln_Total_Reach)) +
+  geom_histogram(binwidth = 0.5,fill='navyblue', color = 'white' ) +
+  labs(y = 'Count',x = "Log Total Reach") +
+  theme_bw()
+
+
+## Adding figures to be added in adjacent to each other
+association_figs_reach <- ggarrange(g3, g4,
+                       hjust = -0.6,
+                       ncol = 2, nrow = 1)
+
+association_figs_reach
+
+### checking the data for normal distribution after logs
+datasummary_skim(data_clean)
+
+
+
+### Creating binary variables for confounders
+data_clean$Photo <- ifelse(data_clean$Type == "Photo",1,0)
+data_clean$Status <- ifelse(data_clean$Type == "Status",1,0)
+data_clean$Link <- ifelse(data_clean$Type == "Link",1,0)
+data_clean$Video <- ifelse(data_clean$Type =="Video",1,0)
+
+
+```
+
+
+
+
+
+After completing all the transformations and alterations, the data has a total **11 variables with 481 observations**. The final variables are presented in the descriptive statistics Table 1 (Exhibit 3 in appendix). The only variable missing from the table is the categorical variable "Type of Post", the binary variables created for that are included in the table. Apart from the binary variable, Table 1 shows that for total interaction and total reach the mean is greater than median (interactions: mean = 194.19, median = 122 and reach: mean = 11 361.23, median = 5240). This clearly indicated towards a right skewed distribution, while on the other hand, the log value for both variables suggests that mean and median are close to each other, thus the data is more normally distributed. For the numeric confounding variable "time of the day", the distribution seems to be rather normal. 
+
+
+```{r, include=FALSE}
+## adding the descriptive statistic for the variables.
+data_sum <- datasummary( (`Total Interaction` = Total_Interactions ) + 
+             (`Total Reach` = Total_Reach ) + 
+             (`Log Total Interaction` = ln_Total_Interactions ) + 
+             (`Log Total Reach` = ln_Total_Reach) + 
+             (`Paid Post` = Paid) + 
+             (`Time of the Day` = Post_Hour) + 
+             (`Type of Post: Photo` = Photo )+
+             (`Type of Post: Status` = Status ) +
+             (`Type of Post: Link` = Link ) +
+             (`Type of Post: Video` = Video ) ~
+             mean + Median + SD + Min + Max + P05 + P95 , 
+             data = data_clean ,
+             title = 'Descriptive statistics') %>% 
+      kable_styling(latex_options = c("HOLD_position","scale_down"))
+
+data_sum
+```
+
+
+## Expectations
+Going back to the original question stated in the introduction of this document, "The idea is to establish if there is a linear relationship between the total interaction on a post with total reach". I also believe that other variables such as the time of the day the post was uploaded, what type of post it was and whether it was paid also have an impact on the total interactions. Meanwhile, based on my understanding of the digital marketing platform like Facebook, when and what type of post also has an effect on the total reach of the post and will be considered as controlling variables in this analysis. Therefore, to prove the hunch about this pattern of association between the dependent and independent variable, my hypothesis for this analysis is:
+
+$$H_0:=\beta_1 \neq 0$$
+$$H_A:=\beta_1 = 0$$
+
+## Investigating Patterns of Association
+I begin to test this hypothesis by first understanding the key pattern of association which is between interactions and reach based on non parametric regression. For this, I created a Lowess Curve for log of interactions and log of reach. The graph for this has been added in the appendix (Exhibit 4) and shows that there tends to be a relation between both the variables. The slope of the cure is positive and increasing for the first part and tends to slightly decrease in the second part yet staying positive. The confidence interval, as per the graph, is narrow since most of the observations are close to the line of best fit created by this function. The same chart was also used to examine if linear splines are required to be added in the model for the independent variable, which in this case wasn't needed. In the same way, as shown in Exhibit 5, the line of best fit was created for the numeric controlling variable i.e. Time of the day (Post_Hour). As per the graph there tends to be some pattern of association between interaction and the time the post was uploaded but it  appears to be slightly on the negative side. Based on what we know at this stage, that the later the post is uploaded the less interaction it will have. The confidence interval appears to be narrow in the first half of the curve and tends to get wider in the later half, meaning that observations for most part are not very close to the Lowess curve. Additionally, I also decided to the examine the linear pattern of association between the dependent and independent variable. In for order to do so, I used the Fit Linear Model as shown in Exhibit 6. 
+
+Next, to further understand how all the variables interact with and impact each other I also created a **Correlation Matrix**, this can be reviewed in appendix (Exhibit 7). I agree that these results are not very reliable, but as the name suggests, it can provide the analyst with a basic idea about each variable and its relation to the other variables. Based on the correlations depicted by the matrix we can observe that indeed there tends to be some pattern of association between most of the variables. The log of interactions (dependent variable) has a positive relation with log of reach, paid post, post being a status or video. On the contrary, log of interactions has a negative relation with post being a link and no relation if it is a photo. What's more interesting is the fact that log of reach also has some association with the controlling variables further and thus suggests that interaction terms will need to be added for variables such as paid post and hour of the day when building the regression models.
+
+
+```{r, include=FALSE}
+
+# LOWESS NONPARAMETRIC REGRESSION
+
+### checking for if any of the variable that's numeric that require spline and results
+### that we don't need spline since there wasn't significant change in the curve of best fit 
+
+g5 <- ggplot( data_clean , aes(x = ln_Total_Reach, y = ln_Total_Interactions)) +
+    geom_point(color='red',size=2,alpha=0.6) +
+    geom_smooth(method="loess" , formula = y ~ x )+
+    labs(x = "Log Total Reach", y = "Log Total Interactions") +
+    theme_bw()
+
+g5
+
+g6 <- ggplot( data_clean , aes(x = Post_Hour, y = ln_Total_Interactions)) +
+    geom_point(color='red',size=2,alpha=0.6) +
+    geom_smooth(method="loess" , formula = y ~ x )+
+    labs(x = "Time of the Day", y = "Log Total Interactions") +
+    theme_bw()
+
+g6
+
+### checking for leaner relationship between y and x variable and since we have one we would use
+### feols for regressions
+
+g7 <- ggplot( data_clean , aes(x = ln_Total_Reach, y = ln_Total_Interactions)) +
+    geom_point(color='red',size=2,alpha=0.6) +
+    geom_smooth(method="lm" , formula = y ~ x )+
+    labs(x = "Log Total Reach", y = "Log Total Interactions") +
+    theme_bw()
+
+g7
+
+
+### Correlation Matrix
+
+numeric_data <- keep( data_clean , is.numeric )
+
+cT <- round( cor( numeric_data , use = "complete.obs") , 2 )
+# create a lower triangular matrix
+cT[ upper.tri( cT ) ] <- NA
+# Put it into a tibble format
+melted_cormat <- melt( cT , na.rm = TRUE)
+# Now we can create a heat-map
+cor_matrix <- ggplot( data = melted_cormat, aes( Var2 , Var1 , fill = value ) )+
+  geom_tile( color = "white" ) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1,1), space = "Lab",
+                       name="Correlation") +
+  theme_bw()+
+  theme( axis.text.x = element_text(angle = 45, vjust = 1,
+                                    size = 10, hjust = 1))+
+  labs(y="",x="")+
+  coord_fixed()
+cor_matrix
+```
+
+
+## Regression Models
+Now, that a basic pattern of association between the variables has been established, let us examine the regression analysis for the stated hypothesis. There are a total of 4 linear regression models which are explained below in the sequence the variables were added to unveil the pattern of relation. All the models are adjusted for the heteroskedastic robust standard errors. The results of all the regressions are shown in the Table 2, Exhibit 8 of the Appendix.
+
+```{r, include=FALSE}
+# Regressions (feols with robust SE)
+
+reg1 <- feols( ln_Total_Interactions ~ ln_Total_Reach, data=data_clean, vcov = 'hetero' )
+summary( reg1 )
+
+reg2 <- feols( ln_Total_Interactions ~ ln_Total_Reach + Paid + ln_Total_Reach*Paid, data=data_clean, vcov = 'hetero' )
+summary( reg2 )
+
+reg3 <- feols( ln_Total_Interactions ~ ln_Total_Reach + Paid + ln_Total_Reach*Paid +
+               Post_Hour + ln_Total_Reach*Post_Hour, data=data_clean, vcov = 'hetero' )
+summary( reg3 )
+
+reg4 <- feols(ln_Total_Interactions ~ ln_Total_Reach + Paid + ln_Total_Reach*Paid +
+                Post_Hour + ln_Total_Reach*Post_Hour + Video + Photo + Status
+              , data=data_clean, vcov = 'hetero' )
+summary( reg4 )
+
+
+summary_reg <- msummary(list(reg1 , reg2 , reg3 , reg4),
+         fmt="%.0f",
+         gof_omit = 'DF|Deviance|Log.Lik.|F|AIC|BIC|R2|PseudoR2|R2 Adj.|Std.Errors',
+         stars=c('*' = .05, '**' = .01),
+         coef_rename = c("(Intercept)" = "Intercept",
+                          "ln_Total_Reach" = "Log Total Reach ",
+                    "Paid Post" = "Paid",
+                    "ln_Total_Reach:Paid" = "Log Total Reach x Paid Post",
+                    "Post_Hour" = "Time of the Day",
+                    "ln_Total_Reach:Post_Hour" = "Log Total Reach x Time of the Day",
+                    "Video" = "Type: Video",
+                    "Photo" = "Type: Photo",
+                    "Status" = "Type: Status",
+                          "Num.Obs."="Observation"),
+          title = "Regression Model Summary") %>% 
+  kableExtra::kable_styling(latex_options = "hold_position")
+
+summary_reg
+
+style_noHeaders = style.tex(var.title = "", fixef.title = "", stats.title = " ")
+summary_reg<- kable( etable( reg1 , reg2 , reg3 , reg4 ,
+               title = 'Regression Summary Table',
+               dict = c("(Intercept)" = "Intercept",
+                          "ln_Total_Reach" = "Log Total Reach ",
+                    "Paid Post" = "Paid",
+                    "ln_Total_Reach:Paid" = "Log Total Reach x Paid Post",
+                    "Post_Hour" = "Time of the Day",
+                    "ln_Total_Reach:Post_Hour" = "Log Total Reach x Time of the Day",
+                    "Video" = "Type: Video",
+                    "Photo" = "Type: Photo",
+                    "Status" = "Type: Status"),
+               se.below = T,
+               coefstat = 'se',
+               fitstat = c('n','r2'),
+               se.row = F,
+               depvar = F ) ,
+               col.names = c('Model 1','Model 2','Model 3','Model 4'),
+       "latex", booktabs = TRUE,  position = "H",
+       caption = 'Models to uncover relation between interactions and reach')%>% 
+  kable_styling(latex_options = c("hold_position","scale_down"))
+
+```
+
+
+**(1) Log Interaction Vs Log Reach** 
+$$log(Interactions):=\beta_0 + \beta_1log(Reach)$$
+The first linear model tends to present whether there is any relationship between the dependent variable and independent variable i.e. Log of Interaction and Log of Reach respectively. Based on this Log Log Model, ordinary least square estimates that if the total reach on a post is higher by 1%, the total interactions would be higher by approximately 0.66% with a 99.99% level of significance. The R-Square for this model is 0.43, which suggests that the variation is independent variable explains 43% of the variation in dependent variable. 
+
+**(2) Log Interaction Vs Log Reach + Paid Post**
+$$log(Interactions):=\beta_0 + \beta_1log(Reach) + \beta_2(Paid) + \beta_3log(Reach)(Paid)$$
+The Second model estimate the relationship between the two variables in the previous model along with a binary controlling variable i.e. post being paid. As per this model the estimated $\beta$ coefficient of Log Total Reach suggests that 1% higher reach will result in 0.75% higher total interaction on a posts (at 99.99% level of significance) keeping everything else constant. In the same way, if a post is paid the total interaction will be higher by 203.93%. On the contrary the coefficient of the interaction term Log Reach and post being paid estimates that the total interactions on the post will be 0.23% lower. The $\beta$ coefficient of paid post and the interaction has 95% level of confidence. 
+
+**(3) Log Interaction Vs Log Reach + Paid Post + Time of the Day**
+$$log(Interaction):=\beta_0 + beta_1log(Reach) + \beta_2(Paid) + \beta_3(Time) + \beta_4log(Reach)(Paid) + \beta_5log(Reach)(Time)$$
+In this model, an additional confounding variable "Time(hour) of the day" is added to the regression equation in the previous model. The association between interactions and the additional controlling variable has a 99% level of confidence and states that, everything else remaining constant, if a post is uploaded one hour later in the day the total interaction will be lower by 22.42%. On the other hand, interaction term log reach and time of the day estimates if a post is uploaded one hour late, the interactions will be higher by 0.019% (level of confidence is 95%). This is slightly inconsistent with the general trends about the time in the data. I believe this may be possible that due to a few days for instance, were holidays or weekends and the traffic on social media platforms tends to be higher in the evenings. 
+
+
+**(4) Log Interaction Vs Log Reach + Paid Post + Time of the Day + Type of Post**
+$$log(Interaction):=\beta_0 + beta_1log(Reach) + \beta_2(Paid) + \beta_3(Time) + \beta_4(Video) +$$ $$\beta_5(Photo) + \beta_6(Status) + \beta_7log(Reach)(Paid) + \beta_8log(Reach)(Time)$$
+In this final regression, the new added confounder is the type of post (Video, Photo, Status or Link). An interaction term was not included in the model for this variable because according to my understanding the type of post has no direct impact on the reach of the post itself. For instance, the reason why people using social media marketing tend to opt for paid posts is because it provides more reach, but this is usually not consistent with the type of post. Based on this model, Interaction tends to be higher by 89.48% if the post is a video compared to other types of post and keeping everything else constant. This has significance level of 99%. Similarly, in case of the post being a photo or status, the interaction tends to be higher by 120% or 100% respectively, compared to other type of posts. These two $\beta$ values have a significance level of 99.99%. 
+
+## Conclusion
+To conclude, the regression models created for this analysis clearly suggest that our expectations about the pattern of association between the dependent and independent variable is correct and there appears to be a positive relationship. The same is true for the confounding variables, as except a few, most of the variables tend to have a positive impact on the total interaction of a Facebook post. Moreover, when we compare models with each other, we see a consistent increase in the R Square (Model 1 = 0.43, Model 2 = 0.44, Model 3 = 0.46 and Model 4 = 0.51) and level of significance for each of the coefficients. This further indicates that our models kept on improving as we added more confounding variables. Furthermore, for our above stated hypotheses, we won't be rejecting $H_0$, since coefficient in all models are significantly different from zero.
+
+We also observe that most coefficient values are also consistent with our with our expectations from that variable's impact on total interactions such as, if the post is paid, in all models, interaction would be higher by approximately 200%. The only coefficient value that was inconsistent with our expeditions form it was the interaction term for the confounding variable "Paid Post". The estimates suggests that the interaction term $\beta log(Reach)(Paid)$ has a negative impact on interactions, which in reality should be the other way around. 
+
+
+**Our Preferred Model**
+$$log(Interaction):=\beta_0 + beta_1log(Reach) + \beta_2(Paid) + \beta_3(Time) + \beta_4(Video) +$$ $$\beta_5(Photo) + \beta_6(Status) + \beta_7log(Reach)(Paid) + \beta_8log(Reach)(Time)$$
+This is our preferred model because, alongside being the most consistent with our exceptions, it is also statistically and logically correct. Meaning, all expect one, estimated $\beta$ coefficient values coincides with how they are intended to perform in the real world for a digital media strategy of a Facebook page.  The R Square for this model was the highest compared to all other models i.e. 51% of the variation in interaction is explained by this model. The level of significance for $\beta$ coefficients was also the highest among other models, most of the coefficients had an 99% or more confidence level and the lowest being 95%.
+
+Overall, I would say that our analysis tends to answer the question we had with regards to this data. The only thing that one can improve in this model is adding more confounding variables that have an impact on the total interactions on a post. I believe there are more variables that would impact interactions such as "Week of the month" or "Month of the year", which were not included in this analysis. Including similar variables to the model would be helpful in explaining the hidden patterns of association that this analysis could not discover. 
+
+
+
+
+
+\newpage
+## Appendix
+
+**Exhibit 1**
+```{r, echo=FALSE, warning=FALSE, fig.width=8, fig.height = 2, fig.align="center"}
+
+association_figs_interaction
+```
+
+
+**Exhibit 2**
+```{r, echo=FALSE, warning=FALSE, fig.width=8, fig.height = 2, fig.align="center"}
+association_figs_reach
+```
+
+
+**Exhibit 3**
+```{r, echo=FALSE}
+data_sum
+```
+
+\newpage
+**Exhibit 4**
+```{r, echo=FALSE, warning=FALSE, fig.width=8, fig.height = 3, fig.align="center"}
+g5
+```
+
+**Exhibit 5**
+```{r, echo=FALSE, warning=FALSE, fig.width=8, fig.height = 3, fig.align="center"}
+g6
+```
+
+**Exhibit 6**
+```{r, echo=FALSE, warning=FALSE, fig.width=8, fig.height = 3, fig.align="center"}
+g7
+```
+
+\newpage
+**Exhibit 7**
+```{r, echo=FALSE, warning=FALSE, fig.width=5, fig.height = 5, fig.align="center"}
+cor_matrix
+```
+
+**Exhibit 7**
+```{r, echo=FALSE, warning=FALSE, message=FALSE,fig.width=6, fig.height=3}
+summary_reg
+```
+
